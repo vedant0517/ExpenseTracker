@@ -1,29 +1,45 @@
 package com.expensetracker;
 
+import com.expensetracker.exception.StorageException;
+import com.expensetracker.model.FinancialPeriodSummary;
 import com.expensetracker.model.Transaction;
 import com.expensetracker.model.TransactionType;
+import com.expensetracker.repository.CsvTransactionRepository;
+import com.expensetracker.repository.TransactionRepository;
 import com.expensetracker.service.ExpenseManager;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.YearMonth;
 import java.time.format.DateTimeParseException;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Scanner;
 
 /**
  * Console user interface for the Personal Expense Tracker.
  * 
- * Handles user interaction, input validation, table rendering,
- * and delegates all business logic to ExpenseManager.
+ * Features:
+ * - Persistent storage with CsvTransactionRepository.
+ * - Auto-load on startup and auto-save on modification.
+ * - Comprehensive reporting: weekly, monthly, yearly, category totals, and averages.
+ * - Safe input handling without crashes.
  */
 public class Main {
 
+    private static final String DEFAULT_CSV_FILE = "transactions.csv";
     private final ExpenseManager manager;
     private final Scanner scanner;
 
     public Main() {
-        this.manager = new ExpenseManager();
+        TransactionRepository repository = new CsvTransactionRepository(DEFAULT_CSV_FILE);
+        this.manager = new ExpenseManager(repository);
+        this.scanner = new Scanner(System.in);
+    }
+
+    public Main(TransactionRepository repository) {
+        this.manager = new ExpenseManager(repository);
         this.scanner = new Scanner(System.in);
     }
 
@@ -33,12 +49,26 @@ public class Main {
     }
 
     /**
-     * Main application loop. Displays the menu until user chooses to exit.
+     * Main application lifecycle.
      */
     public void run() {
         System.out.println("=================================================");
         System.out.println("      Welcome to Personal Expense Tracker        ");
         System.out.println("=================================================");
+
+        // Auto-load persisted transactions
+        try {
+            manager.loadFromStorage();
+            if (!manager.isEmpty()) {
+                System.out.printf("✔ Loaded %d transactions from '%s'.%n", manager.getTransactionCount(), DEFAULT_CSV_FILE);
+            } else {
+                System.out.printf("ℹ Starting with an empty tracker ('%s').%n", DEFAULT_CSV_FILE);
+            }
+        } catch (StorageException e) {
+            System.err.println("⚠ WARNING: Failed to load transactions from storage: " + e.getMessage());
+            System.err.println("ℹ To protect existing data, no automatic overwrite will occur.");
+        }
+        System.out.println();
 
         boolean running = true;
         while (running) {
@@ -52,7 +82,7 @@ public class Main {
                 case 3 -> handleSearchById();
                 case 4 -> handleUpdateTransaction();
                 case 5 -> handleDeleteTransaction();
-                case 6 -> handleFinancialSummary();
+                case 6 -> handleReportsMenu();
                 case 7 -> handleFilterTransactions();
                 case 8 -> {
                     System.out.println("Thank you for using Personal Expense Tracker. Goodbye!");
@@ -71,7 +101,7 @@ public class Main {
         System.out.println("3. Search Transaction by ID");
         System.out.println("4. Update Transaction");
         System.out.println("5. Delete Transaction");
-        System.out.println("6. View Financial Summary (Income, Expense, Balance)");
+        System.out.println("6. Financial Reports & Analytics");
         System.out.println("7. Filter Transactions (by Category or Type)");
         System.out.println("8. Exit");
         System.out.println("-------------------------------------------------");
@@ -90,8 +120,12 @@ public class Main {
         LocalDate date = readLocalDate("Enter Date (YYYY-MM-DD, or press Enter for today): ");
         String description = readOptionalString("Enter Description (optional, press Enter to skip): ");
 
-        Transaction added = manager.addTransaction(title, amount, category, type, date, description);
-        System.out.println("\n✔ Transaction added successfully with ID #" + added.getId() + "!");
+        try {
+            Transaction added = manager.addTransaction(title, amount, category, type, date, description);
+            System.out.println("\n✔ Transaction added & saved successfully with ID #" + added.getId() + "!");
+        } catch (StorageException e) {
+            System.err.println("✖ Error saving transaction to storage: " + e.getMessage());
+        }
     }
 
     private void handleViewAllTransactions() {
@@ -145,11 +179,15 @@ public class Main {
         LocalDate date = readLocalDate("New Date (YYYY-MM-DD, or press Enter for today): ");
         String description = readOptionalString("New Description (optional, press Enter to skip): ");
 
-        boolean updated = manager.updateTransaction(id, title, amount, category, type, date, description);
-        if (updated) {
-            System.out.println("\n✔ Transaction #" + id + " updated successfully!");
-        } else {
-            System.out.println("✖ Failed to update transaction.");
+        try {
+            boolean updated = manager.updateTransaction(id, title, amount, category, type, date, description);
+            if (updated) {
+                System.out.println("\n✔ Transaction #" + id + " updated & persisted successfully!");
+            } else {
+                System.out.println("✖ Failed to update transaction.");
+            }
+        } catch (StorageException e) {
+            System.err.println("✖ Error updating storage: " + e.getMessage());
         }
     }
 
@@ -161,28 +199,155 @@ public class Main {
         }
 
         int id = readPositiveInt("Enter Transaction ID to delete: ");
-        boolean deleted = manager.deleteTransaction(id);
-
-        if (deleted) {
-            System.out.println("✔ Transaction #" + id + " deleted successfully!");
-        } else {
-            System.out.println("✖ Transaction with ID #" + id + " not found.");
+        try {
+            boolean deleted = manager.deleteTransaction(id);
+            if (deleted) {
+                System.out.println("✔ Transaction #" + id + " deleted & removed from storage!");
+            } else {
+                System.out.println("✖ Transaction with ID #" + id + " not found.");
+            }
+        } catch (StorageException e) {
+            System.err.println("✖ Error saving deletion to storage: " + e.getMessage());
         }
     }
 
-    private void handleFinancialSummary() {
-        System.out.println("---------------- FINANCIAL SUMMARY --------------");
-        BigDecimal totalIncome = manager.getTotalIncome();
-        BigDecimal totalExpenses = manager.getTotalExpenses();
-        BigDecimal balance = manager.getBalance();
-        int count = manager.getTransactionCount();
+    // =========================================================================
+    // Financial Reports & Analytics Menu
+    // =========================================================================
 
-        System.out.printf("  Total Transactions : %d%n", count);
-        System.out.printf("  Total Income       : $%,.2f%n", totalIncome);
-        System.out.printf("  Total Expenses     : $%,.2f%n", totalExpenses);
+    private void handleReportsMenu() {
+        if (manager.isEmpty()) {
+            System.out.println("No transactions available for reports.");
+            return;
+        }
+
+        System.out.println("================ FINANCIAL REPORTS ================");
+        System.out.println("1. Overall Financial Summary");
+        System.out.println("2. Category-wise Expense Breakdown");
+        System.out.println("3. Weekly Financial Summary");
+        System.out.println("4. Monthly Financial Summary");
+        System.out.println("5. Yearly Financial Summary");
+        System.out.println("6. Highest & Average Expense Statistics");
+        System.out.println("7. Return to Main Menu");
+        System.out.println("===================================================");
+
+        int choice = readInt("Select Report (1-7): ", 1, 7);
+        System.out.println();
+
+        switch (choice) {
+            case 1 -> printOverallSummary();
+            case 2 -> printCategoryWiseExpenses();
+            case 3 -> handleWeeklyReport();
+            case 4 -> handleMonthlyReport();
+            case 5 -> handleYearlyReport();
+            case 6 -> printExpenseStatistics();
+            case 7 -> { /* return */ }
+        }
+    }
+
+    private void printOverallSummary() {
+        System.out.println("---------------- OVERALL SUMMARY ----------------");
+        BigDecimal income = manager.getTotalIncome();
+        BigDecimal expense = manager.getTotalExpenses();
+        BigDecimal balance = manager.getBalance();
+
+        System.out.printf("  Total Transactions : %d%n", manager.getTransactionCount());
+        System.out.printf("  Total Income       : $%,.2f%n", income);
+        System.out.printf("  Total Expenses     : $%,.2f%n", expense);
         System.out.println("  ---------------------------------------------");
-        System.out.printf("  Current Net Balance: $%,.2f%n", balance);
+        System.out.printf("  Net Balance        : $%,.2f%n", balance);
         System.out.println("-------------------------------------------------");
+    }
+
+    private void printCategoryWiseExpenses() {
+        System.out.println("--------- CATEGORY-WISE EXPENSE BREAKDOWN -------");
+        Map<String, BigDecimal> breakdown = manager.getCategoryExpenseTotals();
+
+        if (breakdown.isEmpty()) {
+            System.out.println("No expense transactions recorded.");
+            return;
+        }
+
+        BigDecimal totalExpense = manager.getTotalExpenses();
+        System.out.printf("| %-20s | %-12s | %-10s |%n", "Category", "Total Spent", "Share (%)");
+        System.out.println("+----------------------+--------------+------------+");
+
+        for (Map.Entry<String, BigDecimal> entry : breakdown.entrySet()) {
+            double percent = (totalExpense.compareTo(BigDecimal.ZERO) > 0)
+                    ? entry.getValue().doubleValue() / totalExpense.doubleValue() * 100.0
+                    : 0.0;
+            System.out.printf("| %-20s | $%,11.2f | %9.1f%% |%n",
+                    capitalize(entry.getKey()), entry.getValue(), percent);
+        }
+        System.out.println("+----------------------+--------------+------------+");
+        System.out.printf("| %-20s | $%,11.2f |    100.0%%  |%n", "TOTAL", totalExpense);
+        System.out.println("-------------------------------------------------");
+    }
+
+    private void handleWeeklyReport() {
+        System.out.println("--- Weekly Report ---");
+        LocalDate refDate = readLocalDate("Enter reference date (YYYY-MM-DD, or press Enter for current week): ");
+        FinancialPeriodSummary summary = manager.getWeeklySummary(refDate);
+        renderPeriodSummary(summary);
+    }
+
+    private void handleMonthlyReport() {
+        System.out.println("--- Monthly Report ---");
+        YearMonth current = YearMonth.now();
+        int year = readInt(String.format("Enter Year (e.g. 2026, default %d): ", current.getYear()), 1900, 2100);
+        int month = readInt("Enter Month (1-12): ", 1, 12);
+
+        FinancialPeriodSummary summary = manager.getMonthlySummary(year, month);
+        renderPeriodSummary(summary);
+    }
+
+    private void handleYearlyReport() {
+        System.out.println("--- Yearly Report ---");
+        int year = readInt(String.format("Enter Year (e.g. %d): ", LocalDate.now().getYear()), 1900, 2100);
+        FinancialPeriodSummary summary = manager.getYearlySummary(year);
+        renderPeriodSummary(summary);
+    }
+
+    private void printExpenseStatistics() {
+        System.out.println("------------- EXPENSE STATISTICS ---------------");
+        Optional<Transaction> highest = manager.getHighestExpense();
+        BigDecimal avg = manager.getAverageExpense();
+
+        if (highest.isPresent()) {
+            Transaction t = highest.get();
+            System.out.printf("  Highest Single Expense: $%,.2f (#%d - %s in '%s')%n",
+                    t.getAmount(), t.getId(), t.getTitle(), t.getCategory());
+        } else {
+            System.out.println("  Highest Single Expense: None");
+        }
+        System.out.printf("  Average Expense Amount: $%,.2f%n", avg);
+        System.out.println("-------------------------------------------------");
+    }
+
+    private void renderPeriodSummary(FinancialPeriodSummary summary) {
+        System.out.println("-------------------------------------------------");
+        System.out.printf("  Report Period      : %s%n", summary.periodLabel());
+        System.out.printf("  Date Range         : %s to %s%n", summary.startDate(), summary.endDate());
+        System.out.printf("  Total Transactions : %d (Income: %d, Expense: %d)%n",
+                summary.transactionCount(), summary.incomeCount(), summary.expenseCount());
+        System.out.printf("  Total Income       : $%,.2f%n", summary.totalIncome());
+        System.out.printf("  Total Expenses     : $%,.2f%n", summary.totalExpenses());
+        System.out.println("  ---------------------------------------------");
+        System.out.printf("  Period Net Balance : $%,.2f%n", summary.netBalance());
+
+        if (summary.highestExpense().isPresent()) {
+            Transaction h = summary.highestExpense().get();
+            System.out.printf("  Highest Expense    : $%,.2f (%s)%n", h.getAmount(), h.getTitle());
+        }
+        System.out.printf("  Average Expense    : $%,.2f%n", summary.averageExpense());
+        System.out.println("-------------------------------------------------");
+
+        if (!summary.categoryExpenses().isEmpty()) {
+            System.out.println("  Category Breakdown:");
+            summary.categoryExpenses().forEach((cat, amt) ->
+                    System.out.printf("   - %-18s: $%,.2f%n", capitalize(cat), amt));
+            System.out.println("-------------------------------------------------");
+        }
     }
 
     private void handleFilterTransactions() {
@@ -220,7 +385,7 @@ public class Main {
     }
 
     // =========================================================================
-    // Table Rendering Helper
+    // Table & Input Helpers
     // =========================================================================
 
     private void renderTransactionTable(List<Transaction> transactions) {
@@ -237,7 +402,6 @@ public class Main {
 
         for (Transaction t : transactions) {
             String desc = t.getDescription().isEmpty() ? "-" : t.getDescription();
-            // Truncate long descriptions if needed for neat display
             if (desc.length() > 20) desc = desc.substring(0, 17) + "...";
             String title = t.getTitle().length() > 20 ? t.getTitle().substring(0, 17) + "..." : t.getTitle();
             String cat = t.getCategory().length() > 13 ? t.getCategory().substring(0, 10) + "..." : t.getCategory();
@@ -254,10 +418,6 @@ public class Main {
         }
         System.out.println(separator);
     }
-
-    // =========================================================================
-    // Safe Console Input & Validation Helpers
-    // =========================================================================
 
     private int readInt(String prompt, int min, int max) {
         while (true) {
@@ -318,7 +478,7 @@ public class Main {
                 }
                 System.out.println("Amount must be strictly greater than zero (positive).");
             } catch (NumberFormatException e) {
-                System.out.println("Invalid amount format. Please enter a valid decimal number (e.g. 150.00).");
+                System.out.println("Invalid amount format. Please enter a decimal number (e.g. 150.00).");
             }
         }
     }
@@ -349,5 +509,10 @@ public class Main {
                 System.out.println("Invalid date format. Please use YYYY-MM-DD (e.g., 2026-10-15) or press Enter for today.");
             }
         }
+    }
+
+    private String capitalize(String text) {
+        if (text == null || text.isEmpty()) return "";
+        return Character.toUpperCase(text.charAt(0)) + text.substring(1);
     }
 }

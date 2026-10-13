@@ -1,68 +1,107 @@
 package com.expensetracker.service;
 
+import com.expensetracker.exception.StorageException;
+import com.expensetracker.model.FinancialPeriodSummary;
 import com.expensetracker.model.Transaction;
 import com.expensetracker.model.TransactionType;
+import com.expensetracker.repository.TransactionRepository;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
+import java.time.DayOfWeek;
 import java.time.LocalDate;
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Optional;
+import java.time.temporal.TemporalAdjusters;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
- * Service class handling all business logic for managing transactions.
- * 
- * Adheres to strict separation of concerns:
- * - Maintains in-memory state in an ArrayList.
- * - Auto-generates unique sequential IDs.
- * - Contains ZERO console I/O (no System.out or Scanner).
- * - Exposes pure, testable methods.
+ * Service class handling all business logic for transactions and financial reporting.
+ *
+ * Responsibilities:
+ * - In-memory transactions management with optional CSV persistence.
+ * - Sequential, collision-free transaction ID allocation across restarts.
+ * - Robust financial reporting (weekly, monthly, yearly, category aggregations).
+ * - Stream-based analytics (highest expense, average expense).
  */
 public class ExpenseManager {
+
     private final List<Transaction> transactions;
+    private final TransactionRepository repository;
     private int nextId;
 
     /**
-     * Initializes an empty ExpenseManager with auto-increment ID starting at 1.
+     * Creates an in-memory ExpenseManager without persistent storage (useful for isolated unit testing).
      */
     public ExpenseManager() {
+        this(null);
+    }
+
+    /**
+     * Creates an ExpenseManager backed by a TransactionRepository.
+     * Automatically loads existing transactions and adjusts nextId to avoid duplicate IDs.
+     *
+     * @param repository Persistence repository, or null for in-memory mode
+     */
+    public ExpenseManager(TransactionRepository repository) {
         this.transactions = new ArrayList<>();
+        this.repository = repository;
         this.nextId = 1;
     }
 
     /**
-     * Creates and adds a new transaction with an auto-generated unique ID.
+     * Loads transactions from storage, setting nextId higher than any loaded ID.
      *
-     * @param title       Title of the transaction
-     * @param amount      Positive monetary amount
-     * @param category    Category (e.g., Food, Salary)
-     * @param type        INCOME or EXPENSE
-     * @param date        Transaction date
-     * @param description Optional description
-     * @return The newly created and stored Transaction instance
+     * @throws StorageException if persistent storage fails to read
+     */
+    public void loadFromStorage() throws StorageException {
+        if (repository == null) {
+            return;
+        }
+        List<Transaction> loaded = repository.loadAll();
+        transactions.clear();
+        transactions.addAll(loaded);
+
+        // Avoid duplicate transaction IDs when the application restarts
+        this.nextId = transactions.stream()
+                .mapToInt(Transaction::getId)
+                .max()
+                .orElse(0) + 1;
+    }
+
+    /**
+     * Persists the current transaction list to storage.
+     */
+    public void persist() throws StorageException {
+        if (repository != null) {
+            repository.saveAll(transactions);
+        }
+    }
+
+    // =========================================================================
+    // Core CRUD Operations
+    // =========================================================================
+
+    /**
+     * Adds a new transaction, assigns a unique ID, and auto-saves to storage.
      */
     public Transaction addTransaction(String title, BigDecimal amount, String category,
-                                      TransactionType type, LocalDate date, String description) {
+                                      TransactionType type, LocalDate date, String description) throws StorageException {
         int id = nextId++;
         Transaction transaction = new Transaction(id, title, amount, category, type, date, description);
         transactions.add(transaction);
+        persist();
         return transaction;
     }
 
     /**
-     * Returns an unmodifiable view of all stored transactions.
-     * Defensive design prevents external modification of the internal list.
+     * Returns an unmodifiable list of all stored transactions.
      */
     public List<Transaction> getAllTransactions() {
         return Collections.unmodifiableList(new ArrayList<>(transactions));
     }
 
     /**
-     * Searches for a transaction by its unique ID.
-     *
-     * @param id The transaction ID to search for
-     * @return Optional containing the transaction if found, or Optional.empty()
+     * Finds a transaction by its unique ID.
      */
     public Optional<Transaction> findById(int id) {
         return transactions.stream()
@@ -71,82 +110,58 @@ public class ExpenseManager {
     }
 
     /**
-     * Updates an existing transaction.
-     *
-     * @param id          ID of the transaction to update
-     * @param title       New title
-     * @param amount      New positive amount
-     * @param category    New category
-     * @param type        New type
-     * @param date        New date
-     * @param description New description
-     * @return true if updated successfully, false if the transaction ID does not exist
+     * Updates an existing transaction and saves changes to storage.
      */
     public boolean updateTransaction(int id, String title, BigDecimal amount, String category,
-                                     TransactionType type, LocalDate date, String description) {
+                                     TransactionType type, LocalDate date, String description) throws StorageException {
         Optional<Transaction> optional = findById(id);
         if (optional.isEmpty()) {
             return false;
         }
 
         Transaction transaction = optional.get();
-        // Setters apply the exact same validation logic
         transaction.setTitle(title);
         transaction.setAmount(amount);
         transaction.setCategory(category);
         transaction.setType(type);
         transaction.setDate(date);
         transaction.setDescription(description);
+
+        persist();
         return true;
     }
 
     /**
-     * Deletes a transaction by ID.
-     *
-     * @param id The ID to delete
-     * @return true if deleted, false if the ID was not found
+     * Deletes a transaction by ID and persists changes.
      */
-    public boolean deleteTransaction(int id) {
-        return transactions.removeIf(t -> t.getId() == id);
-    }
-
-    /**
-     * Calculates the sum of all transactions of the specified type.
-     */
-    public BigDecimal getTotalByType(TransactionType type) {
-        if (type == null) {
-            return BigDecimal.ZERO.setScale(2);
+    public boolean deleteTransaction(int id) throws StorageException {
+        boolean removed = transactions.removeIf(t -> t.getId() == id);
+        if (removed) {
+            persist();
         }
-        return transactions.stream()
-                .filter(t -> t.getType() == type)
-                .map(Transaction::getAmount)
-                .reduce(BigDecimal.ZERO.setScale(2), BigDecimal::add);
+        return removed;
     }
 
-    /**
-     * Returns the total sum of all INCOME transactions.
-     */
+    // =========================================================================
+    // Core Balance & Filter Calculations
+    // =========================================================================
+
+    public BigDecimal getTotalByType(TransactionType type) {
+        return getTotalByType(this.transactions, type);
+    }
+
     public BigDecimal getTotalIncome() {
         return getTotalByType(TransactionType.INCOME);
     }
 
-    /**
-     * Returns the total sum of all EXPENSE transactions.
-     */
     public BigDecimal getTotalExpenses() {
         return getTotalByType(TransactionType.EXPENSE);
     }
 
-    /**
-     * Calculates current balance: Total Income - Total Expenses.
-     */
     public BigDecimal getBalance() {
-        return getTotalIncome().subtract(getTotalExpenses()).setScale(2);
+        return getTotalIncome().subtract(getTotalExpenses()).setScale(2, RoundingMode.HALF_UP);
     }
 
-    /**
-     * Filters transactions by category (case-insensitive substring or exact match).
-     */
     public List<Transaction> filterByCategory(String category) {
         if (category == null || category.trim().isEmpty()) {
             return Collections.emptyList();
@@ -157,9 +172,6 @@ public class ExpenseManager {
                 .toList();
     }
 
-    /**
-     * Filters transactions by type (INCOME or EXPENSE).
-     */
     public List<Transaction> filterByType(TransactionType type) {
         if (type == null) {
             return Collections.emptyList();
@@ -169,9 +181,6 @@ public class ExpenseManager {
                 .toList();
     }
 
-    /**
-     * Filters transactions matching both category and type.
-     */
     public List<Transaction> filter(String category, TransactionType type) {
         return transactions.stream()
                 .filter(t -> type == null || t.getType() == type)
@@ -180,17 +189,147 @@ public class ExpenseManager {
                 .toList();
     }
 
-    /**
-     * Returns the total number of transactions currently stored.
-     */
     public int getTransactionCount() {
         return transactions.size();
     }
 
-    /**
-     * Checks if the tracker has zero transactions.
-     */
     public boolean isEmpty() {
         return transactions.isEmpty();
+    }
+
+    // =========================================================================
+    // Advanced Reports & Aggregations (Java Streams & Lambdas)
+    // =========================================================================
+
+    /**
+     * Calculates category-wise expense totals, sorted from highest expense to lowest.
+     */
+    public Map<String, BigDecimal> getCategoryExpenseTotals() {
+        return getCategoryExpenseTotals(this.transactions);
+    }
+
+    public Map<String, BigDecimal> getCategoryExpenseTotals(List<Transaction> source) {
+        return source.stream()
+                .filter(t -> t.getType() == TransactionType.EXPENSE)
+                .collect(Collectors.groupingBy(
+                        t -> t.getCategory().toLowerCase(),
+                        Collectors.reducing(BigDecimal.ZERO.setScale(2), Transaction::getAmount, BigDecimal::add)
+                ))
+                .entrySet().stream()
+                .sorted(Map.Entry.<String, BigDecimal>comparingByValue().reversed())
+                .collect(Collectors.toMap(
+                        Map.Entry::getKey,
+                        Map.Entry::getValue,
+                        (e1, e2) -> e1,
+                        LinkedHashMap::new
+                ));
+    }
+
+    /**
+     * Finds the single highest EXPENSE transaction in the given transaction pool.
+     */
+    public Optional<Transaction> getHighestExpense() {
+        return getHighestExpense(this.transactions);
+    }
+
+    public Optional<Transaction> getHighestExpense(List<Transaction> source) {
+        return source.stream()
+                .filter(t -> t.getType() == TransactionType.EXPENSE)
+                .max(Comparator.comparing(Transaction::getAmount));
+    }
+
+    /**
+     * Calculates the average amount spent per expense transaction.
+     */
+    public BigDecimal getAverageExpense() {
+        return getAverageExpense(this.transactions);
+    }
+
+    public BigDecimal getAverageExpense(List<Transaction> source) {
+        List<Transaction> expenses = source.stream()
+                .filter(t -> t.getType() == TransactionType.EXPENSE)
+                .toList();
+
+        if (expenses.isEmpty()) {
+            return BigDecimal.ZERO.setScale(2);
+        }
+
+        BigDecimal sum = expenses.stream()
+                .map(Transaction::getAmount)
+                .reduce(BigDecimal.ZERO.setScale(2), BigDecimal::add);
+
+        return sum.divide(BigDecimal.valueOf(expenses.size()), 2, RoundingMode.HALF_UP);
+    }
+
+    /**
+     * Generates a comprehensive summary for any arbitrary date range (inclusive).
+     */
+    public FinancialPeriodSummary getSummaryForDateRange(String label, LocalDate startDate, LocalDate endDate) {
+        List<Transaction> inRange = transactions.stream()
+                .filter(t -> !t.getDate().isBefore(startDate) && !t.getDate().isAfter(endDate))
+                .toList();
+
+        BigDecimal income = getTotalByType(inRange, TransactionType.INCOME);
+        BigDecimal expense = getTotalByType(inRange, TransactionType.EXPENSE);
+        BigDecimal balance = income.subtract(expense).setScale(2, RoundingMode.HALF_UP);
+
+        int expenseCount = (int) inRange.stream().filter(t -> t.getType() == TransactionType.EXPENSE).count();
+        int incomeCount = (int) inRange.stream().filter(t -> t.getType() == TransactionType.INCOME).count();
+
+        return new FinancialPeriodSummary(
+                label,
+                startDate,
+                endDate,
+                income,
+                expense,
+                balance,
+                inRange.size(),
+                expenseCount,
+                incomeCount,
+                getHighestExpense(inRange),
+                getAverageExpense(inRange),
+                getCategoryExpenseTotals(inRange)
+        );
+    }
+
+    /**
+     * Generates a weekly financial summary for the week containing referenceDate (Monday through Sunday).
+     */
+    public FinancialPeriodSummary getWeeklySummary(LocalDate referenceDate) {
+        LocalDate startOfWeek = referenceDate.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY));
+        LocalDate endOfWeek = referenceDate.with(TemporalAdjusters.nextOrSame(DayOfWeek.SUNDAY));
+        String label = String.format("Week of %s to %s", startOfWeek, endOfWeek);
+        return getSummaryForDateRange(label, startOfWeek, endOfWeek);
+    }
+
+    /**
+     * Generates a monthly financial summary for the specified year and month.
+     */
+    public FinancialPeriodSummary getMonthlySummary(int year, int month) {
+        LocalDate startOfMonth = LocalDate.of(year, month, 1);
+        LocalDate endOfMonth = startOfMonth.with(TemporalAdjusters.lastDayOfMonth());
+        String label = String.format("%s %d", startOfMonth.getMonth(), year);
+        return getSummaryForDateRange(label, startOfMonth, endOfMonth);
+    }
+
+    /**
+     * Generates a yearly financial summary for the given year.
+     */
+    public FinancialPeriodSummary getYearlySummary(int year) {
+        LocalDate startOfYear = LocalDate.of(year, 1, 1);
+        LocalDate endOfYear = LocalDate.of(year, 12, 31);
+        String label = String.format("Year %d", year);
+        return getSummaryForDateRange(label, startOfYear, endOfYear);
+    }
+
+    // Helper calculation on arbitrary sub-lists
+    private BigDecimal getTotalByType(List<Transaction> list, TransactionType type) {
+        if (type == null) {
+            return BigDecimal.ZERO.setScale(2);
+        }
+        return list.stream()
+                .filter(t -> t.getType() == type)
+                .map(Transaction::getAmount)
+                .reduce(BigDecimal.ZERO.setScale(2), BigDecimal::add);
     }
 }
