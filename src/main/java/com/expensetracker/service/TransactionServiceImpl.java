@@ -67,6 +67,7 @@ public class TransactionServiceImpl implements TransactionService {
             LocalDate endDate,
             Pageable pageable) {
 
+        validateDateRange(startDate, endDate);
         return repository.findFiltered(type, category, startDate, endDate, pageable)
                 .map(TransactionResponseDto::fromEntity);
     }
@@ -106,6 +107,7 @@ public class TransactionServiceImpl implements TransactionService {
 
     @Override
     public FinancialSummaryResponseDto getFinancialSummary(LocalDate startDate, LocalDate endDate) {
+        validateDateRange(startDate, endDate);
         BigDecimal income = repository.sumByTypeAndDateBetween(TransactionType.INCOME, startDate, endDate);
         BigDecimal expenses = repository.sumByTypeAndDateBetween(TransactionType.EXPENSE, startDate, endDate);
         BigDecimal netBalance = income.subtract(expenses).setScale(2, RoundingMode.HALF_UP);
@@ -131,6 +133,7 @@ public class TransactionServiceImpl implements TransactionService {
 
     @Override
     public List<CategoryExpenseDto> getCategoryExpenses(LocalDate startDate, LocalDate endDate) {
+        validateDateRange(startDate, endDate);
         List<CategoryTotalProjection> projections = repository.findCategoryExpenseTotals(startDate, endDate);
         BigDecimal totalExpenses = repository.sumByTypeAndDateBetween(TransactionType.EXPENSE, startDate, endDate);
 
@@ -145,6 +148,14 @@ public class TransactionServiceImpl implements TransactionService {
         }
 
         return result;
+    }
+
+    private void validateDateRange(LocalDate startDate, LocalDate endDate) {
+        if (startDate != null && endDate != null && startDate.isAfter(endDate)) {
+            throw new IllegalArgumentException(
+                    String.format("startDate cannot be after endDate: %s is after %s", startDate, endDate)
+            );
+        }
     }
 
     private String capitalize(String text) {

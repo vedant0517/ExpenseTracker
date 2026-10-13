@@ -80,7 +80,7 @@ public class TransactionControllerTest {
         mockMvc.perform(get("/api/transactions?page=0&size=5"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content").isArray())
-                .andExpect(jsonPath("$.pageable").exists());
+                .andExpect(jsonPath("$.page").exists());
     }
 
     @Test
@@ -104,5 +104,62 @@ public class TransactionControllerTest {
         mockMvc.perform(get("/api/reports/categories"))
                 .andExpect(status().isOk())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON));
+    }
+
+    @Test
+    void testUpdateTransactionSuccess() throws Exception {
+        // Create first
+        TransactionRequestDto createReq = new TransactionRequestDto(
+                "Initial Coffee", new BigDecimal("5.00"), "Drinks", TransactionType.EXPENSE, LocalDate.now(), "Morning"
+        );
+        String createRes = mockMvc.perform(post("/api/transactions")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(createReq)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+
+        long createdId = objectMapper.readTree(createRes).get("id").asLong();
+
+        // Update
+        TransactionRequestDto updateReq = new TransactionRequestDto(
+                "Updated Coffee", new BigDecimal("6.50"), "Drinks", TransactionType.EXPENSE, LocalDate.now(), "Large latte"
+        );
+        mockMvc.perform(put("/api/transactions/" + createdId)
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(updateReq)))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.title").value("Updated Coffee"))
+                .andExpect(jsonPath("$.amount").value(6.50));
+    }
+
+    @Test
+    void testDeleteTransactionSuccess() throws Exception {
+        // Create first
+        TransactionRequestDto createReq = new TransactionRequestDto(
+                "To Delete", new BigDecimal("10.00"), "Misc", TransactionType.EXPENSE, LocalDate.now(), ""
+        );
+        String createRes = mockMvc.perform(post("/api/transactions")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(createReq)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+
+        long createdId = objectMapper.readTree(createRes).get("id").asLong();
+
+        // Delete -> 204 No Content
+        mockMvc.perform(delete("/api/transactions/" + createdId))
+                .andExpect(status().isNoContent());
+
+        // Second Delete -> 404 Not Found
+        mockMvc.perform(delete("/api/transactions/" + createdId))
+                .andExpect(status().isNotFound());
+    }
+
+    @Test
+    void testInvalidIdTypeMismatchReturns400() throws Exception {
+        mockMvc.perform(get("/api/transactions/invalid-id-string"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.status").value(400))
+                .andExpect(jsonPath("$.message").value(containsString("could not be converted to expected type")));
     }
 }

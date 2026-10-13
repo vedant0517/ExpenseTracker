@@ -104,6 +104,22 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Handles 400 BAD REQUEST when business arguments are invalid (e.g. startDate after endDate).
+     */
+    @ExceptionHandler(IllegalArgumentException.class)
+    public ResponseEntity<ErrorResponseDto> handleIllegalArgumentException(
+            IllegalArgumentException ex, HttpServletRequest request) {
+
+        ErrorResponseDto errorResponse = ErrorResponseDto.of(
+                HttpStatus.BAD_REQUEST.value(),
+                HttpStatus.BAD_REQUEST.getReasonPhrase(),
+                ex.getMessage(),
+                request.getRequestURI()
+        );
+        return new ResponseEntity<>(errorResponse, HttpStatus.BAD_REQUEST);
+    }
+
+    /**
      * Fallback handler for any uncaught 500 INTERNAL SERVER ERROR exceptions.
      */
     @ExceptionHandler(Exception.class)
