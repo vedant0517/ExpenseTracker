@@ -8,6 +8,7 @@ import com.expensetracker.repository.CsvTransactionRepository;
 import com.expensetracker.repository.JdbcTransactionRepository;
 import com.expensetracker.service.ExpenseManager;
 import com.expensetracker.util.DatabaseConnectionManager;
+import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.math.BigDecimal;
@@ -19,36 +20,32 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * Core Java test suite verifying Phase 1 and Phase 2 features:
- * - In-memory and CSV persistent storage
- * - No duplicate IDs across application restarts
- * - RFC 4180 quotes and commas handling
- * - Missing, empty, and malformed CSV handling
- * - Weekly, Monthly, and Yearly report aggregations
- * - Category breakdown and highest/average expense statistics
+ * Core Java and JDBC regression test suite for Phase 1-3 components.
+ * Verified to run both in JUnit 5 runner and as a standalone executable suite.
  */
 public class ExpenseManagerTest {
 
     public static void main(String[] args) {
-        System.out.println("=== Running Expense Tracker Phase 2 Comprehensive Test Suite ===");
+        System.out.println("=== Running Expense Tracker Core/JDBC Test Suite ===");
+        ExpenseManagerTest runner = new ExpenseManagerTest();
         int passed = 0;
         int failed = 0;
 
         List<TestItem> tests = List.of(
-                new TestItem("testEmptyTracker", ExpenseManagerTest::testEmptyTracker),
-                new TestItem("testAddAndAutoIncrementIds", ExpenseManagerTest::testAddAndAutoIncrementIds),
-                new TestItem("testFinancialCalculations", ExpenseManagerTest::testFinancialCalculations),
-                new TestItem("testUpdateAndValidation", ExpenseManagerTest::testUpdateAndValidation),
-                new TestItem("testDeleteExistingAndNonExistent", ExpenseManagerTest::testDeleteExistingAndNonExistent),
-                new TestItem("testFiltering", ExpenseManagerTest::testFiltering),
-                new TestItem("testCsvPersistenceAndRestartIdContinuity", ExpenseManagerTest::testCsvPersistenceAndRestartIdContinuity),
-                new TestItem("testRfc4180SpecialCharactersInCsv", ExpenseManagerTest::testRfc4180SpecialCharactersInCsv),
-                new TestItem("testMissingAndMalformedCsvHandling", ExpenseManagerTest::testMissingAndMalformedCsvHandling),
-                new TestItem("testCategoryWiseExpensesAndAverages", ExpenseManagerTest::testCategoryWiseExpensesAndAverages),
-                new TestItem("testWeeklyMonthlyYearlyReports", ExpenseManagerTest::testWeeklyMonthlyYearlyReports),
-                new TestItem("testJdbcCrudAndGeneratedKeys", ExpenseManagerTest::testJdbcCrudAndGeneratedKeys),
-                new TestItem("testJdbcTransactionBatchAndRollback", ExpenseManagerTest::testJdbcTransactionBatchAndRollback),
-                new TestItem("testDatabaseConnectionFailure", ExpenseManagerTest::testDatabaseConnectionFailure)
+                new TestItem("testEmptyTracker", runner::testEmptyTracker),
+                new TestItem("testAddAndAutoIncrementIds", runner::testAddAndAutoIncrementIds),
+                new TestItem("testFinancialCalculations", runner::testFinancialCalculations),
+                new TestItem("testUpdateAndValidation", runner::testUpdateAndValidation),
+                new TestItem("testDeleteExistingAndNonExistent", runner::testDeleteExistingAndNonExistent),
+                new TestItem("testFiltering", runner::testFiltering),
+                new TestItem("testCsvPersistenceAndRestartIdContinuity", runner::testCsvPersistenceAndRestartIdContinuity),
+                new TestItem("testRfc4180SpecialCharactersInCsv", runner::testRfc4180SpecialCharactersInCsv),
+                new TestItem("testMissingAndMalformedCsvHandling", runner::testMissingAndMalformedCsvHandling),
+                new TestItem("testCategoryWiseExpensesAndAverages", runner::testCategoryWiseExpensesAndAverages),
+                new TestItem("testWeeklyMonthlyYearlyReports", runner::testWeeklyMonthlyYearlyReports),
+                new TestItem("testJdbcCrudAndGeneratedKeys", runner::testJdbcCrudAndGeneratedKeys),
+                new TestItem("testJdbcTransactionBatchAndRollback", runner::testJdbcTransactionBatchAndRollback),
+                new TestItem("testDatabaseConnectionFailure", runner::testDatabaseConnectionFailure)
         );
 
         for (TestItem test : tests) {
@@ -63,7 +60,7 @@ public class ExpenseManagerTest {
             }
         }
 
-        System.out.printf("%nPhase 2 Test Summary: %d passed, %d failed.%n", passed, failed);
+        System.out.printf("%nTest Summary: %d passed, %d failed.%n", passed, failed);
         if (failed > 0) {
             System.exit(1);
         }
@@ -89,7 +86,8 @@ public class ExpenseManagerTest {
 
     // --- Phase 1 Baseline Tests ---
 
-    private static void testEmptyTracker() {
+    @Test
+    public void testEmptyTracker() {
         ExpenseManager manager = new ExpenseManager();
         assertTrue(manager.isEmpty(), "New manager should be empty");
         assertEquals(0, manager.getTransactionCount(), "Initial count should be 0");
@@ -99,7 +97,8 @@ public class ExpenseManagerTest {
         assertTrue(manager.findById(999).isEmpty(), "Searching non-existent ID should return Optional.empty()");
     }
 
-    private static void testAddAndAutoIncrementIds() throws Exception {
+    @Test
+    public void testAddAndAutoIncrementIds() throws Exception {
         ExpenseManager manager = new ExpenseManager();
         Transaction t1 = manager.addTransaction("Salary", new BigDecimal("5000.00"), "Work", TransactionType.INCOME, LocalDate.now(), "Monthly salary");
         Transaction t2 = manager.addTransaction("Groceries", new BigDecimal("150.25"), "Food", TransactionType.EXPENSE, LocalDate.now(), "Supermarket");
@@ -109,7 +108,8 @@ public class ExpenseManagerTest {
         assertEquals(2, manager.getTransactionCount(), "Manager count should be 2");
     }
 
-    private static void testFinancialCalculations() throws Exception {
+    @Test
+    public void testFinancialCalculations() throws Exception {
         ExpenseManager manager = new ExpenseManager();
         manager.addTransaction("Salary", new BigDecimal("5000.00"), "Work", TransactionType.INCOME, LocalDate.now(), "");
         manager.addTransaction("Freelance", new BigDecimal("1200.50"), "Work", TransactionType.INCOME, LocalDate.now(), "");
@@ -121,7 +121,8 @@ public class ExpenseManagerTest {
         assertEquals(new BigDecimal("4450.25"), manager.getBalance(), "Net balance calculation");
     }
 
-    private static void testUpdateAndValidation() throws Exception {
+    @Test
+    public void testUpdateAndValidation() throws Exception {
         ExpenseManager manager = new ExpenseManager();
         Transaction t = manager.addTransaction("Coffee", new BigDecimal("5.00"), "Food", TransactionType.EXPENSE, LocalDate.now(), "");
 
@@ -134,7 +135,8 @@ public class ExpenseManagerTest {
         assertEquals(new BigDecimal("7.50"), fetched.get().getAmount(), "Amount should be updated");
     }
 
-    private static void testDeleteExistingAndNonExistent() throws Exception {
+    @Test
+    public void testDeleteExistingAndNonExistent() throws Exception {
         ExpenseManager manager = new ExpenseManager();
         Transaction t1 = manager.addTransaction("Book", new BigDecimal("20.00"), "Education", TransactionType.EXPENSE, LocalDate.now(), "");
         Transaction t2 = manager.addTransaction("Bus Pass", new BigDecimal("50.00"), "Transit", TransactionType.EXPENSE, LocalDate.now(), "");
@@ -145,7 +147,8 @@ public class ExpenseManagerTest {
         assertTrue(!manager.deleteTransaction(888), "Deleting arbitrary non-existent ID should return false");
     }
 
-    private static void testFiltering() throws Exception {
+    @Test
+    public void testFiltering() throws Exception {
         ExpenseManager manager = new ExpenseManager();
         manager.addTransaction("Salary", new BigDecimal("3000.00"), "Work", TransactionType.INCOME, LocalDate.now(), "");
         manager.addTransaction("Bonus", new BigDecimal("500.00"), "Work", TransactionType.INCOME, LocalDate.now(), "");
@@ -158,18 +161,17 @@ public class ExpenseManagerTest {
         assertEquals(1, expenseItems.size(), "Should filter 1 expense item");
     }
 
-    // --- Phase 2 New Feature Tests ---
+    // --- Phase 2 Feature Tests ---
 
-    private static void testCsvPersistenceAndRestartIdContinuity() throws Exception {
+    @Test
+    public void testCsvPersistenceAndRestartIdContinuity() throws Exception {
         Path tempCsv = Files.createTempFile("test_storage_", ".csv");
         try {
-            // Session 1: Add transactions and persist
             CsvTransactionRepository repo = new CsvTransactionRepository(tempCsv);
             ExpenseManager session1 = new ExpenseManager(repo);
             session1.addTransaction("Paycheck", new BigDecimal("4000.00"), "Salary", TransactionType.INCOME, LocalDate.parse("2026-10-01"), "Direct deposit");
             session1.addTransaction("Electricity", new BigDecimal("120.00"), "Utilities", TransactionType.EXPENSE, LocalDate.parse("2026-10-02"), "Bill");
 
-            // Session 2: Fresh start, simulate application restart
             ExpenseManager session2 = new ExpenseManager(repo);
             session2.loadFromStorage();
 
@@ -179,7 +181,6 @@ public class ExpenseManagerTest {
             assertEquals("Paycheck", t1.get().getTitle(), "Transaction #1 title matches");
             assertEquals(new BigDecimal("4000.00"), t1.get().getAmount(), "Transaction #1 amount matches");
 
-            // Crucial test: avoid duplicate ID after restart
             Transaction t3 = session2.addTransaction("Internet", new BigDecimal("60.00"), "Utilities", TransactionType.EXPENSE, LocalDate.parse("2026-10-03"), "Wifi");
             assertEquals(3, t3.getId(), "New transaction after restart must receive next sequential ID (3)");
         } finally {
@@ -187,18 +188,17 @@ public class ExpenseManagerTest {
         }
     }
 
-    private static void testRfc4180SpecialCharactersInCsv() throws Exception {
+    @Test
+    public void testRfc4180SpecialCharactersInCsv() throws Exception {
         Path tempCsv = Files.createTempFile("test_rfc4180_", ".csv");
         try {
             CsvTransactionRepository repo = new CsvTransactionRepository(tempCsv);
             ExpenseManager manager = new ExpenseManager(repo);
 
-            // Title with commas and description with double quotes
             String complexTitle = "Groceries, fruits & vegetables";
             String complexDesc = "Bought \"Organic\" apples and 100% milk";
             manager.addTransaction(complexTitle, new BigDecimal("85.50"), "Food & Drink", TransactionType.EXPENSE, LocalDate.now(), complexDesc);
 
-            // Reload in new session
             ExpenseManager reloaded = new ExpenseManager(repo);
             reloaded.loadFromStorage();
 
@@ -210,15 +210,14 @@ public class ExpenseManagerTest {
         }
     }
 
-    private static void testMissingAndMalformedCsvHandling() throws Exception {
-        // Test 1: Non-existent file loads safely as empty list
+    @Test
+    public void testMissingAndMalformedCsvHandling() throws Exception {
         Path nonExistent = Path.of("target/non_existent_file_test.csv");
         Files.deleteIfExists(nonExistent);
         CsvTransactionRepository repo = new CsvTransactionRepository(nonExistent);
         List<Transaction> loaded = repo.loadAll();
         assertTrue(loaded.isEmpty(), "Missing file should return empty list without crashing");
 
-        // Test 2: Malformed file throws StorageException and does not silently swallow errors
         Path malformedFile = Files.createTempFile("test_malformed_", ".csv");
         try {
             Files.writeString(malformedFile, "id,title,amount,category,type,date,description\nINVALID_ROW_CORRUPT\n");
@@ -235,7 +234,8 @@ public class ExpenseManagerTest {
         }
     }
 
-    private static void testCategoryWiseExpensesAndAverages() throws Exception {
+    @Test
+    public void testCategoryWiseExpensesAndAverages() throws Exception {
         ExpenseManager manager = new ExpenseManager();
         manager.addTransaction("Salary", new BigDecimal("5000.00"), "Work", TransactionType.INCOME, LocalDate.now(), "");
         manager.addTransaction("Groceries", new BigDecimal("200.00"), "Food", TransactionType.EXPENSE, LocalDate.now(), "");
@@ -246,37 +246,32 @@ public class ExpenseManagerTest {
         assertEquals(new BigDecimal("300.00"), breakdown.get("food"), "Food category expense total");
         assertEquals(new BigDecimal("50.00"), breakdown.get("transport"), "Transport category expense total");
 
-        // Highest Expense
         Optional<Transaction> highest = manager.getHighestExpense();
         assertTrue(highest.isPresent(), "Highest expense should be present");
         assertEquals(new BigDecimal("200.00"), highest.get().getAmount(), "Highest expense should be Groceries (200.00)");
 
-        // Average Expense: (200 + 100 + 50) / 3 = 350 / 3 = 116.67
         assertEquals(new BigDecimal("116.67"), manager.getAverageExpense(), "Average expense calculation");
     }
 
-    private static void testWeeklyMonthlyYearlyReports() throws Exception {
+    @Test
+    public void testWeeklyMonthlyYearlyReports() throws Exception {
         ExpenseManager manager = new ExpenseManager();
-        // Transactions across different months and years
         manager.addTransaction("Oct 2026 Salary", new BigDecimal("4000.00"), "Salary", TransactionType.INCOME, LocalDate.parse("2026-10-01"), "");
         manager.addTransaction("Oct 2026 Rent", new BigDecimal("1200.00"), "Rent", TransactionType.EXPENSE, LocalDate.parse("2026-10-05"), "");
         manager.addTransaction("Nov 2026 Bonus", new BigDecimal("1000.00"), "Bonus", TransactionType.INCOME, LocalDate.parse("2026-11-15"), "");
         manager.addTransaction("Nov 2026 Laptop", new BigDecimal("1500.00"), "Tech", TransactionType.EXPENSE, LocalDate.parse("2026-11-20"), "");
 
-        // Monthly report for October 2026
         FinancialPeriodSummary oct = manager.getMonthlySummary(2026, 10);
         assertEquals(new BigDecimal("4000.00"), oct.totalIncome(), "Oct total income");
         assertEquals(new BigDecimal("1200.00"), oct.totalExpenses(), "Oct total expenses");
         assertEquals(new BigDecimal("2800.00"), oct.netBalance(), "Oct net balance");
         assertEquals(2, oct.transactionCount(), "Oct transaction count");
 
-        // Monthly report for November 2026
         FinancialPeriodSummary nov = manager.getMonthlySummary(2026, 11);
         assertEquals(new BigDecimal("1000.00"), nov.totalIncome(), "Nov total income");
         assertEquals(new BigDecimal("1500.00"), nov.totalExpenses(), "Nov total expenses");
         assertEquals(new BigDecimal("-500.00"), nov.netBalance(), "Nov net deficit balance");
 
-        // Yearly report for 2026 (Both Oct + Nov)
         FinancialPeriodSummary year2026 = manager.getYearlySummary(2026);
         assertEquals(new BigDecimal("5000.00"), year2026.totalIncome(), "2026 annual income");
         assertEquals(new BigDecimal("2700.00"), year2026.totalExpenses(), "2026 annual expenses");
@@ -286,7 +281,8 @@ public class ExpenseManagerTest {
 
     // --- Phase 3 JDBC Tests ---
 
-    private static void testJdbcCrudAndGeneratedKeys() throws Exception {
+    @Test
+    public void testJdbcCrudAndGeneratedKeys() throws Exception {
         String memUrl = "jdbc:h2:mem:jdbctest;MODE=MySQL;DB_CLOSE_DELAY=-1";
         DatabaseConnectionManager db = new DatabaseConnectionManager(memUrl, "sa", "");
         db.initializeSchema();
@@ -294,17 +290,14 @@ public class ExpenseManagerTest {
         JdbcTransactionRepository repo = new JdbcTransactionRepository(db);
         ExpenseManager manager = new ExpenseManager(repo);
 
-        // 1. Insert and verify auto-generated key from DB
         Transaction t1 = manager.addTransaction("Coffee", new BigDecimal("4.50"), "Food", TransactionType.EXPENSE, LocalDate.parse("2026-10-10"), "Latte");
         assertTrue(t1.getId() > 0, "Database must generate an auto-increment ID > 0");
 
-        // 2. Query by ID
         Optional<Transaction> fetched = repo.findById(t1.getId());
         assertTrue(fetched.isPresent(), "Record must be found in database by generated ID");
         assertEquals("Coffee", fetched.get().getTitle(), "Fetched title matches");
         assertEquals(new BigDecimal("4.50"), fetched.get().getAmount(), "Fetched amount matches");
 
-        // 3. Update in DB
         boolean updated = manager.updateTransaction(t1.getId(), "Fancy Latte", new BigDecimal("6.00"), "Drinks", TransactionType.EXPENSE, LocalDate.parse("2026-10-10"), "Double shot");
         assertTrue(updated, "Update must succeed");
         Optional<Transaction> updatedRecord = repo.findById(t1.getId());
@@ -312,16 +305,15 @@ public class ExpenseManagerTest {
         assertEquals("Fancy Latte", updatedRecord.get().getTitle(), "Title updated in DB");
         assertEquals(new BigDecimal("6.00"), updatedRecord.get().getAmount(), "Amount updated in DB");
 
-        // 4. Delete from DB
         boolean deleted = manager.deleteTransaction(t1.getId());
         assertTrue(deleted, "Delete should succeed");
         assertTrue(repo.findById(t1.getId()).isEmpty(), "Deleted ID must no longer exist in DB");
 
-        // 5. Query non-existent ID
         assertTrue(repo.findById(99999).isEmpty(), "Non-existent record returns empty Optional");
     }
 
-    private static void testJdbcTransactionBatchAndRollback() throws Exception {
+    @Test
+    public void testJdbcTransactionBatchAndRollback() throws Exception {
         String memUrl = "jdbc:h2:mem:tx_test;MODE=MySQL;DB_CLOSE_DELAY=-1";
         DatabaseConnectionManager db = new DatabaseConnectionManager(memUrl, "sa", "");
         db.initializeSchema();
@@ -333,13 +325,12 @@ public class ExpenseManagerTest {
                 new Transaction(2, "Income 2", new BigDecimal("200.00"), "Work", TransactionType.INCOME, LocalDate.now(), "")
         );
 
-        // Commit batch inside transaction
         repo.saveAll(validBatch);
         assertEquals(2, repo.loadAll().size(), "Batch commit should save all 2 transactions");
     }
 
-    private static void testDatabaseConnectionFailure() {
-        // Test unreachable port/host - verify exception is thrown cleanly without leaking credentials
+    @Test
+    public void testDatabaseConnectionFailure() {
         String invalidUrl = "jdbc:mysql://127.0.0.1:59999/non_existent_db?connectTimeout=1000";
         DatabaseConnectionManager badDb = new DatabaseConnectionManager(invalidUrl, "testuser", "secretpassword");
 
@@ -348,7 +339,6 @@ public class ExpenseManagerTest {
             badDb.getConnection();
         } catch (Exception e) {
             caughtException = true;
-            // Verify password is not exposed in the error message
             assertTrue(!e.getMessage().contains("secretpassword"), "Password must never be exposed in error message");
         }
         assertTrue(caughtException, "Attempting to connect to invalid DB must fail with Exception");

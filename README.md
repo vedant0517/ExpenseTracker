@@ -265,16 +265,21 @@ mvn test
 ```
 
 ### Test Suite Summary:
-- **`TransactionServiceTest` (11 tests):** Unit tests using JUnit 5 and Mockito verifying CRUD workflows, DTO mapping, date boundary validation, and exact `BigDecimal` financial math.
+- **`ExpenseManagerTest` (14 tests):** Core Java unit and integration tests covering in-memory transaction management, BigDecimal calculations, Lambda filtering and sorting, CSV file parsing resilience, and Plain JDBC CRUD with transaction rollback.
+- **`TransactionServiceTest` (11 tests):** Unit tests using JUnit 5 and Mockito verifying business logic, DTO mapping, date boundary validation, and exact financial math.
 - **`TransactionJpaRepositoryTest` (6 tests):** Integration tests using `@DataJpaTest` testing dynamic JPQL filters, pagination, boundary queries, and group-by projections.
-- **`TransactionControllerTest` (8 tests):** Full MockMvc integration tests testing status codes (`201`, `200`, `204`, `400`, `404`), pagination, validation error envelopes, and type coercion.
-- **`ReportControllerTest` (3 tests):** Slice tests using `@WebMvcTest` testing financial summaries and category projections.
+- **`TransactionControllerTest` (8 tests):** Web layer MockMvc integration tests testing status codes (`201`, `200`, `204`, `400`, `404`), pagination, validation error envelopes, and type coercion.
+- **`ReportControllerTest` (3 tests):** Slice tests using `@WebMvcTest` verifying financial summaries and category breakdown projections.
 
 **Official Test Results:**
 ```text
 [INFO] Results:
-[INFO] Tests run: 28, Failures: 0, Errors: 0, Skipped: 0
+[INFO] 
+[INFO] Tests run: 42, Failures: 0, Errors: 0, Skipped: 0
+[INFO] 
+[INFO] ------------------------------------------------------------------------
 [INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
 ```
 
 ---
