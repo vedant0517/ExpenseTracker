@@ -86,10 +86,19 @@ public class ExpenseManager {
      */
     public Transaction addTransaction(String title, BigDecimal amount, String category,
                                       TransactionType type, LocalDate date, String description) throws StorageException {
-        int id = nextId++;
-        Transaction transaction = new Transaction(id, title, amount, category, type, date, description);
-        transactions.add(transaction);
-        persist();
+        Transaction transaction;
+        if (repository != null) {
+            // When repository is present (e.g. JDBC with AUTO_INCREMENT or CSV),
+            // let the repository save and return the persistent entity with generated ID.
+            Transaction dummy = new Transaction(nextId, title, amount, category, type, date, description);
+            transaction = repository.save(dummy);
+            this.nextId = Math.max(this.nextId, transaction.getId() + 1);
+            transactions.add(transaction);
+        } else {
+            int id = nextId++;
+            transaction = new Transaction(id, title, amount, category, type, date, description);
+            transactions.add(transaction);
+        }
         return transaction;
     }
 
@@ -127,7 +136,9 @@ public class ExpenseManager {
         transaction.setDate(date);
         transaction.setDescription(description);
 
-        persist();
+        if (repository != null) {
+            return repository.update(transaction);
+        }
         return true;
     }
 
@@ -136,8 +147,8 @@ public class ExpenseManager {
      */
     public boolean deleteTransaction(int id) throws StorageException {
         boolean removed = transactions.removeIf(t -> t.getId() == id);
-        if (removed) {
-            persist();
+        if (removed && repository != null) {
+            return repository.deleteById(id);
         }
         return removed;
     }

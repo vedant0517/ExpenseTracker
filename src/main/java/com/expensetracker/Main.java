@@ -5,8 +5,10 @@ import com.expensetracker.model.FinancialPeriodSummary;
 import com.expensetracker.model.Transaction;
 import com.expensetracker.model.TransactionType;
 import com.expensetracker.repository.CsvTransactionRepository;
+import com.expensetracker.repository.JdbcTransactionRepository;
 import com.expensetracker.repository.TransactionRepository;
 import com.expensetracker.service.ExpenseManager;
+import com.expensetracker.util.DatabaseConnectionManager;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -33,9 +35,20 @@ public class Main {
     private final Scanner scanner;
 
     public Main() {
-        TransactionRepository repository = new CsvTransactionRepository(DEFAULT_CSV_FILE);
-        this.manager = new ExpenseManager(repository);
         this.scanner = new Scanner(System.in);
+        TransactionRepository selectedRepo;
+        try {
+            DatabaseConnectionManager dbManager = new DatabaseConnectionManager();
+            dbManager.initializeSchema();
+            selectedRepo = new JdbcTransactionRepository(dbManager);
+            System.out.printf("✔ Connected to relational database via JDBC at '%s'.%n", dbManager.getSanitizedUrl());
+        } catch (Exception e) {
+            System.out.println("ℹ Database configuration not found or unavailable: " + e.getMessage());
+            System.out.println("ℹ Using local CSV storage ('" + DEFAULT_CSV_FILE + "') as fallback.");
+            System.out.println("  (To connect MySQL/PostgreSQL, copy 'db.properties.example' to 'db.properties' and configure credentials).");
+            selectedRepo = new CsvTransactionRepository(DEFAULT_CSV_FILE);
+        }
+        this.manager = new ExpenseManager(selectedRepo);
     }
 
     public Main(TransactionRepository repository) {
@@ -60,9 +73,9 @@ public class Main {
         try {
             manager.loadFromStorage();
             if (!manager.isEmpty()) {
-                System.out.printf("✔ Loaded %d transactions from '%s'.%n", manager.getTransactionCount(), DEFAULT_CSV_FILE);
+                System.out.printf("✔ Loaded %d transactions into active memory.%n", manager.getTransactionCount());
             } else {
-                System.out.printf("ℹ Starting with an empty tracker ('%s').%n", DEFAULT_CSV_FILE);
+                System.out.println("ℹ Starting with an empty tracker.");
             }
         } catch (StorageException e) {
             System.err.println("⚠ WARNING: Failed to load transactions from storage: " + e.getMessage());

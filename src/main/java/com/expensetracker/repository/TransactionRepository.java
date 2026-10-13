@@ -4,27 +4,46 @@ import com.expensetracker.exception.StorageException;
 import com.expensetracker.model.Transaction;
 
 import java.util.List;
+import java.util.Optional;
 
 /**
- * Storage abstraction contract for reading and writing transactions.
- * Allows decoupling the storage implementation (CSV, Database, etc.)
- * from the business logic layer.
+ * Repository interface defining data access operations for Transaction entities.
+ * Decouples business logic from specific persistence implementations (JDBC, CSV, in-memory).
  */
 public interface TransactionRepository {
 
     /**
-     * Loads all persisted transactions from storage.
-     *
-     * @return List of persisted transactions (empty if no file/data exists)
-     * @throws StorageException if the storage file exists but cannot be read or is corrupt
+     * Loads all transactions from the underlying storage.
      */
     List<Transaction> loadAll() throws StorageException;
 
     /**
-     * Persists all transactions to storage.
+     * Saves a new transaction, populating the generated ID if applicable.
+     */
+    Transaction save(Transaction transaction) throws StorageException;
+
+    /**
+     * Finds a single transaction by ID.
+     */
+    Optional<Transaction> findById(int id) throws StorageException;
+
+    /**
+     * Updates an existing transaction.
      *
-     * @param transactions The list of transactions to save
-     * @throws StorageException if an I/O error occurs during write
+     * @return true if updated, false if record was not found
+     */
+    boolean update(Transaction transaction) throws StorageException;
+
+    /**
+     * Deletes a transaction by ID.
+     *
+     * @return true if deleted, false if record was not found
+     */
+    boolean deleteById(int id) throws StorageException;
+
+    /**
+     * Bulk persists a list of transactions using a database transaction
+     * where all items must succeed or rollback together.
      */
     void saveAll(List<Transaction> transactions) throws StorageException;
 }

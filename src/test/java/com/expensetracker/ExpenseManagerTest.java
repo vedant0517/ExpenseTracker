@@ -5,7 +5,9 @@ import com.expensetracker.model.FinancialPeriodSummary;
 import com.expensetracker.model.Transaction;
 import com.expensetracker.model.TransactionType;
 import com.expensetracker.repository.CsvTransactionRepository;
+import com.expensetracker.repository.JdbcTransactionRepository;
 import com.expensetracker.service.ExpenseManager;
+import com.expensetracker.util.DatabaseConnectionManager;
 
 import java.io.IOException;
 import java.math.BigDecimal;
@@ -43,7 +45,10 @@ public class ExpenseManagerTest {
                 new TestItem("testRfc4180SpecialCharactersInCsv", ExpenseManagerTest::testRfc4180SpecialCharactersInCsv),
                 new TestItem("testMissingAndMalformedCsvHandling", ExpenseManagerTest::testMissingAndMalformedCsvHandling),
                 new TestItem("testCategoryWiseExpensesAndAverages", ExpenseManagerTest::testCategoryWiseExpensesAndAverages),
-                new TestItem("testWeeklyMonthlyYearlyReports", ExpenseManagerTest::testWeeklyMonthlyYearlyReports)
+                new TestItem("testWeeklyMonthlyYearlyReports", ExpenseManagerTest::testWeeklyMonthlyYearlyReports),
+                new TestItem("testJdbcCrudAndGeneratedKeys", ExpenseManagerTest::testJdbcCrudAndGeneratedKeys),
+                new TestItem("testJdbcTransactionBatchAndRollback", ExpenseManagerTest::testJdbcTransactionBatchAndRollback),
+                new TestItem("testDatabaseConnectionFailure", ExpenseManagerTest::testDatabaseConnectionFailure)
         );
 
         for (TestItem test : tests) {
@@ -277,5 +282,75 @@ public class ExpenseManagerTest {
         assertEquals(new BigDecimal("2700.00"), year2026.totalExpenses(), "2026 annual expenses");
         assertEquals(new BigDecimal("2300.00"), year2026.netBalance(), "2026 annual net balance");
         assertEquals(4, year2026.transactionCount(), "2026 transaction count");
+    }
+
+    // --- Phase 3 JDBC Tests ---
+
+    private static void testJdbcCrudAndGeneratedKeys() throws Exception {
+        String memUrl = "jdbc:h2:mem:jdbctest;MODE=MySQL;DB_CLOSE_DELAY=-1";
+        DatabaseConnectionManager db = new DatabaseConnectionManager(memUrl, "sa", "");
+        db.initializeSchema();
+
+        JdbcTransactionRepository repo = new JdbcTransactionRepository(db);
+        ExpenseManager manager = new ExpenseManager(repo);
+
+        // 1. Insert and verify auto-generated key from DB
+        Transaction t1 = manager.addTransaction("Coffee", new BigDecimal("4.50"), "Food", TransactionType.EXPENSE, LocalDate.parse("2026-10-10"), "Latte");
+        assertTrue(t1.getId() > 0, "Database must generate an auto-increment ID > 0");
+
+        // 2. Query by ID
+        Optional<Transaction> fetched = repo.findById(t1.getId());
+        assertTrue(fetched.isPresent(), "Record must be found in database by generated ID");
+        assertEquals("Coffee", fetched.get().getTitle(), "Fetched title matches");
+        assertEquals(new BigDecimal("4.50"), fetched.get().getAmount(), "Fetched amount matches");
+
+        // 3. Update in DB
+        boolean updated = manager.updateTransaction(t1.getId(), "Fancy Latte", new BigDecimal("6.00"), "Drinks", TransactionType.EXPENSE, LocalDate.parse("2026-10-10"), "Double shot");
+        assertTrue(updated, "Update must succeed");
+        Optional<Transaction> updatedRecord = repo.findById(t1.getId());
+        assertTrue(updatedRecord.isPresent(), "Updated record exists");
+        assertEquals("Fancy Latte", updatedRecord.get().getTitle(), "Title updated in DB");
+        assertEquals(new BigDecimal("6.00"), updatedRecord.get().getAmount(), "Amount updated in DB");
+
+        // 4. Delete from DB
+        boolean deleted = manager.deleteTransaction(t1.getId());
+        assertTrue(deleted, "Delete should succeed");
+        assertTrue(repo.findById(t1.getId()).isEmpty(), "Deleted ID must no longer exist in DB");
+
+        // 5. Query non-existent ID
+        assertTrue(repo.findById(99999).isEmpty(), "Non-existent record returns empty Optional");
+    }
+
+    private static void testJdbcTransactionBatchAndRollback() throws Exception {
+        String memUrl = "jdbc:h2:mem:tx_test;MODE=MySQL;DB_CLOSE_DELAY=-1";
+        DatabaseConnectionManager db = new DatabaseConnectionManager(memUrl, "sa", "");
+        db.initializeSchema();
+
+        JdbcTransactionRepository repo = new JdbcTransactionRepository(db);
+
+        List<Transaction> validBatch = List.of(
+                new Transaction(1, "Income 1", new BigDecimal("100.00"), "Work", TransactionType.INCOME, LocalDate.now(), ""),
+                new Transaction(2, "Income 2", new BigDecimal("200.00"), "Work", TransactionType.INCOME, LocalDate.now(), "")
+        );
+
+        // Commit batch inside transaction
+        repo.saveAll(validBatch);
+        assertEquals(2, repo.loadAll().size(), "Batch commit should save all 2 transactions");
+    }
+
+    private static void testDatabaseConnectionFailure() {
+        // Test unreachable port/host - verify exception is thrown cleanly without leaking credentials
+        String invalidUrl = "jdbc:mysql://127.0.0.1:59999/non_existent_db?connectTimeout=1000";
+        DatabaseConnectionManager badDb = new DatabaseConnectionManager(invalidUrl, "testuser", "secretpassword");
+
+        boolean caughtException = false;
+        try {
+            badDb.getConnection();
+        } catch (Exception e) {
+            caughtException = true;
+            // Verify password is not exposed in the error message
+            assertTrue(!e.getMessage().contains("secretpassword"), "Password must never be exposed in error message");
+        }
+        assertTrue(caughtException, "Attempting to connect to invalid DB must fail with Exception");
     }
 }

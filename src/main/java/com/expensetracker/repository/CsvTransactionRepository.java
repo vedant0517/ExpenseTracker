@@ -17,6 +17,7 @@ import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * CSV-based implementation of TransactionRepository.
@@ -127,6 +128,46 @@ public class CsvTransactionRepository implements TransactionRepository {
         } catch (IOException e) {
             throw new StorageException("Failed to atomically replace existing CSV file: " + filePath, e);
         }
+    }
+
+    @Override
+    public Transaction save(Transaction transaction) throws StorageException {
+        List<Transaction> list = loadAll();
+        list.add(transaction);
+        saveAll(list);
+        return transaction;
+    }
+
+    @Override
+    public Optional<Transaction> findById(int id) throws StorageException {
+        return loadAll().stream().filter(t -> t.getId() == id).findFirst();
+    }
+
+    @Override
+    public boolean update(Transaction transaction) throws StorageException {
+        List<Transaction> list = loadAll();
+        boolean found = false;
+        for (int i = 0; i < list.size(); i++) {
+            if (list.get(i).getId() == transaction.getId()) {
+                list.set(i, transaction);
+                found = true;
+                break;
+            }
+        }
+        if (found) {
+            saveAll(list);
+        }
+        return found;
+    }
+
+    @Override
+    public boolean deleteById(int id) throws StorageException {
+        List<Transaction> list = loadAll();
+        boolean removed = list.removeIf(t -> t.getId() == id);
+        if (removed) {
+            saveAll(list);
+        }
+        return removed;
     }
 
     /**

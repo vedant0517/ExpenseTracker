@@ -6,3 +6,6 @@ target/
 .vscode/
 .idea/
 *.iml
+db.properties
+*.csv
+cp.txt
