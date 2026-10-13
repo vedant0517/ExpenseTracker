@@ -46,6 +46,10 @@ public class Transaction {
     @Column(columnDefinition = "TEXT")
     private String description;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "user_id", nullable = false)
+    private User user;
+
     /**
      * Default no-argument constructor required by JPA specification.
      */
@@ -56,7 +60,7 @@ public class Transaction {
      * Parameterized constructor for manual entity instantiation.
      */
     public Transaction(Long id, String title, BigDecimal amount, String category,
-                       TransactionType type, LocalDate date, String description) {
+                       TransactionType type, LocalDate date, String description, User user) {
         this.id = id;
         this.title = title;
         setAmount(amount);
@@ -64,14 +68,33 @@ public class Transaction {
         this.type = type;
         this.date = date;
         this.description = (description == null) ? "" : description.trim();
+        this.user = user;
+    }
+
+    public Transaction(Long id, String title, BigDecimal amount, String category,
+                       TransactionType type, LocalDate date, String description) {
+        this(id, title, amount, category, type, date, description, null);
+    }
+
+    public Transaction(String title, BigDecimal amount, String category,
+                       TransactionType type, LocalDate date, String description, User user) {
+        this(null, title, amount, category, type, date, description, user);
     }
 
     public Transaction(String title, BigDecimal amount, String category,
                        TransactionType type, LocalDate date, String description) {
-        this(null, title, amount, category, type, date, description);
+        this(null, title, amount, category, type, date, description, null);
     }
 
     // --- Getters and Setters ---
+
+    public User getUser() {
+        return user;
+    }
+
+    public void setUser(User user) {
+        this.user = user;
+    }
 
     public Long getId() {
         return id;

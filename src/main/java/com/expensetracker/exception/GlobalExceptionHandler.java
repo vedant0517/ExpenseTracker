@@ -120,6 +120,22 @@ public class GlobalExceptionHandler {
     }
 
     /**
+     * Handles 401 UNAUTHORIZED when login credentials fail authentication.
+     */
+    @ExceptionHandler(org.springframework.security.authentication.BadCredentialsException.class)
+    public ResponseEntity<ErrorResponseDto> handleBadCredentials(
+            org.springframework.security.authentication.BadCredentialsException ex, HttpServletRequest request) {
+
+        ErrorResponseDto errorResponse = ErrorResponseDto.of(
+                HttpStatus.UNAUTHORIZED.value(),
+                HttpStatus.UNAUTHORIZED.getReasonPhrase(),
+                "Invalid username or password.",
+                request.getRequestURI()
+        );
+        return new ResponseEntity<>(errorResponse, HttpStatus.UNAUTHORIZED);
+    }
+
+    /**
      * Fallback handler for any uncaught 500 INTERNAL SERVER ERROR exceptions.
      */
     @ExceptionHandler(Exception.class)

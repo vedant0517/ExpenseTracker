@@ -15,3 +15,12 @@
 # spring.datasource.password=your_mysql_password
 # spring.datasource.driver-class-name=com.mysql.cj.jdbc.Driver
 # spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.MySQLDialect
+
+# Flyway Migrations:
+# spring.flyway.enabled=true
+# spring.flyway.baseline-on-migrate=true
+# spring.jpa.hibernate.ddl-auto=validate
+
+# JWT Security Settings:
+# JWT_SECRET=c3VwZXJTZWNyZXRLZXlGb3JQZXJzb25hbEV4cGVuc2VUcmFja2VyMjAyNk11c3RCZUF0TGVhc3QyNTZCaXRzTG9uZw==
+# JWT_EXPIRATION_MS=86400000

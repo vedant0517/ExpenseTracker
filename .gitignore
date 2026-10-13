@@ -9,3 +9,7 @@ target/
 db.properties
 *.csv
 cp.txt
+.env
+*.env
+*.log
+.DS_Store

@@ -1,13 +1,18 @@
 package com.expensetracker.controller;
 
 import com.expensetracker.dto.TransactionRequestDto;
+import com.expensetracker.entity.User;
 import com.expensetracker.model.TransactionType;
+import com.expensetracker.repository.UserJpaRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.http.MediaType;
+import org.springframework.security.crypto.password.PasswordEncoder;
+import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
@@ -19,7 +24,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * Full integration test suite using Spring Boot MockMvc.
- * Tests HTTP status codes, JSON response shapes, validation errors, and report generation.
+ * Tests HTTP status codes, JSON response shapes, validation errors, and authentication/authorization boundaries.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -31,7 +36,32 @@ public class TransactionControllerTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Autowired
+    private UserJpaRepository userRepository;
+
+    @Autowired
+    private PasswordEncoder passwordEncoder;
+
+    @BeforeEach
+    void setUp() {
+        if (!userRepository.existsByUsername("alice")) {
+            userRepository.save(new User("alice", "alice@example.com", passwordEncoder.encode("password123")));
+        }
+        if (!userRepository.existsByUsername("bob")) {
+            userRepository.save(new User("bob", "bob@example.com", passwordEncoder.encode("password123")));
+        }
+    }
+
     @Test
+    void testUnauthenticatedAccessReturns401() throws Exception {
+        mockMvc.perform(get("/api/transactions"))
+                .andExpect(status().isUnauthorized())
+                .andExpect(jsonPath("$.status").value(401))
+                .andExpect(jsonPath("$.error").value("Unauthorized"));
+    }
+
+    @Test
+    @WithMockUser(username = "alice")
     void testCreateTransactionSuccess() throws Exception {
         TransactionRequestDto request = new TransactionRequestDto(
                 "October Salary",
@@ -54,8 +84,8 @@ public class TransactionControllerTest {
     }
 
     @Test
+    @WithMockUser(username = "alice")
     void testCreateTransactionValidationError() throws Exception {
-        // Invalid request: blank title and negative amount
         TransactionRequestDto invalidRequest = new TransactionRequestDto(
                 "",
                 new BigDecimal("-50.00"),
@@ -76,6 +106,7 @@ public class TransactionControllerTest {
     }
 
     @Test
+    @WithMockUser(username = "alice")
     void testGetTransactionsPagination() throws Exception {
         mockMvc.perform(get("/api/transactions?page=0&size=5"))
                 .andExpect(status().isOk())
@@ -84,6 +115,7 @@ public class TransactionControllerTest {
     }
 
     @Test
+    @WithMockUser(username = "alice")
     void testGetNonExistentTransactionReturns404() throws Exception {
         mockMvc.perform(get("/api/transactions/99999"))
                 .andExpect(status().isNotFound())
@@ -92,23 +124,22 @@ public class TransactionControllerTest {
     }
 
     @Test
+    @WithMockUser(username = "alice")
     void testGetReportsSummaryAndCategories() throws Exception {
-        // Verify summary endpoint
         mockMvc.perform(get("/api/reports/summary"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.totalIncome").exists())
                 .andExpect(jsonPath("$.totalExpenses").exists())
                 .andExpect(jsonPath("$.netBalance").exists());
 
-        // Verify categories endpoint
         mockMvc.perform(get("/api/reports/categories"))
                 .andExpect(status().isOk())
                 .andExpect(content().contentTypeCompatibleWith(MediaType.APPLICATION_JSON));
     }
 
     @Test
+    @WithMockUser(username = "alice")
     void testUpdateTransactionSuccess() throws Exception {
-        // Create first
         TransactionRequestDto createReq = new TransactionRequestDto(
                 "Initial Coffee", new BigDecimal("5.00"), "Drinks", TransactionType.EXPENSE, LocalDate.now(), "Morning"
         );
@@ -120,7 +151,6 @@ public class TransactionControllerTest {
 
         long createdId = objectMapper.readTree(createRes).get("id").asLong();
 
-        // Update
         TransactionRequestDto updateReq = new TransactionRequestDto(
                 "Updated Coffee", new BigDecimal("6.50"), "Drinks", TransactionType.EXPENSE, LocalDate.now(), "Large latte"
         );
@@ -133,8 +163,8 @@ public class TransactionControllerTest {
     }
 
     @Test
+    @WithMockUser(username = "alice")
     void testDeleteTransactionSuccess() throws Exception {
-        // Create first
         TransactionRequestDto createReq = new TransactionRequestDto(
                 "To Delete", new BigDecimal("10.00"), "Misc", TransactionType.EXPENSE, LocalDate.now(), ""
         );
@@ -146,20 +176,55 @@ public class TransactionControllerTest {
 
         long createdId = objectMapper.readTree(createRes).get("id").asLong();
 
-        // Delete -> 204 No Content
         mockMvc.perform(delete("/api/transactions/" + createdId))
                 .andExpect(status().isNoContent());
 
-        // Second Delete -> 404 Not Found
         mockMvc.perform(delete("/api/transactions/" + createdId))
                 .andExpect(status().isNotFound());
     }
 
     @Test
+    @WithMockUser(username = "alice")
     void testInvalidIdTypeMismatchReturns400() throws Exception {
         mockMvc.perform(get("/api/transactions/invalid-id-string"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.status").value(400))
                 .andExpect(jsonPath("$.message").value(containsString("could not be converted to expected type")));
+    }
+
+    @Test
+    @WithMockUser(username = "alice")
+    void testCrossUserAccessPrevention_IDORProtection() throws Exception {
+        // 1. Alice creates a transaction
+        TransactionRequestDto aliceReq = new TransactionRequestDto(
+                "Alice Secret", new BigDecimal("999.00"), "Secret", TransactionType.EXPENSE, LocalDate.now(), "Private"
+        );
+        String aliceRes = mockMvc.perform(post("/api/transactions")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(aliceReq)))
+                .andExpect(status().isCreated())
+                .andReturn().getResponse().getContentAsString();
+        long aliceTxnId = objectMapper.readTree(aliceRes).get("id").asLong();
+
+        // 2. Bob tries to access Alice's transaction by ID -> Must receive 404 Not Found (IDOR prevention)
+        mockMvc.perform(get("/api/transactions/" + aliceTxnId)
+                        .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user("bob")))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.status").value(404));
+
+        // 3. Bob tries to update Alice's transaction -> Must receive 404 Not Found
+        TransactionRequestDto tamperReq = new TransactionRequestDto(
+                "Tampered", new BigDecimal("1.00"), "Food", TransactionType.EXPENSE, LocalDate.now(), ""
+        );
+        mockMvc.perform(put("/api/transactions/" + aliceTxnId)
+                        .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user("bob"))
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(objectMapper.writeValueAsString(tamperReq)))
+                .andExpect(status().isNotFound());
+
+        // 4. Bob tries to delete Alice's transaction -> Must receive 404 Not Found
+        mockMvc.perform(delete("/api/transactions/" + aliceTxnId)
+                        .with(org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.user("bob")))
+                .andExpect(status().isNotFound());
     }
 }

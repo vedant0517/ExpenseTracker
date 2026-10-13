@@ -5,10 +5,14 @@ import com.expensetracker.dto.FinancialSummaryResponseDto;
 import com.expensetracker.dto.TransactionRequestDto;
 import com.expensetracker.dto.TransactionResponseDto;
 import com.expensetracker.entity.Transaction;
+import com.expensetracker.entity.User;
 import com.expensetracker.exception.ResourceNotFoundException;
 import com.expensetracker.model.TransactionType;
 import com.expensetracker.repository.TransactionJpaRepository;
+import com.expensetracker.repository.UserJpaRepository;
 import com.expensetracker.repository.projection.CategoryTotalProjection;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -18,6 +22,9 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
+import org.springframework.security.authentication.BadCredentialsException;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -31,7 +38,7 @@ import static org.mockito.Mockito.*;
 
 /**
  * Pure Unit Test suite for TransactionServiceImpl using JUnit 5 and Mockito.
- * Tests business logic and mapping in complete isolation from the database and web container.
+ * Tests business logic, DTO mapping, user scoping, and IDOR access protections.
  */
 @ExtendWith(MockitoExtension.class)
 public class TransactionServiceTest {
@@ -39,8 +46,27 @@ public class TransactionServiceTest {
     @Mock
     private TransactionJpaRepository repository;
 
+    @Mock
+    private UserJpaRepository userRepository;
+
     @InjectMocks
     private TransactionServiceImpl service;
+
+    private User mockUser;
+
+    @BeforeEach
+    void setUp() {
+        mockUser = new User(1L, "alice", "alice@example.com", "password");
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(mockUser, null, mockUser.getAuthorities())
+        );
+        lenient().when(userRepository.findByUsername("alice")).thenReturn(Optional.of(mockUser));
+    }
+
+    @AfterEach
+    void tearDown() {
+        SecurityContextHolder.clearContext();
+    }
 
     @Test
     void testCreateTransaction_Success() {
@@ -60,7 +86,8 @@ public class TransactionServiceTest {
                 request.getCategory(),
                 request.getType(),
                 request.getDate(),
-                request.getDescription()
+                request.getDescription(),
+                mockUser
         );
 
         when(repository.save(any(Transaction.class))).thenReturn(savedEntity);
@@ -79,9 +106,9 @@ public class TransactionServiceTest {
     @Test
     void testGetTransactionById_Found() {
         Transaction entity = new Transaction(
-                1L, "Bonus", new BigDecimal("1000.00"), "Work", TransactionType.INCOME, LocalDate.now(), "Q3 Bonus"
+                1L, "Bonus", new BigDecimal("1000.00"), "Work", TransactionType.INCOME, LocalDate.now(), "Q3 Bonus", mockUser
         );
-        when(repository.findById(1L)).thenReturn(Optional.of(entity));
+        when(repository.findByIdAndUserId(1L, 1L)).thenReturn(Optional.of(entity));
 
         TransactionResponseDto response = service.getTransactionById(1L);
 
@@ -92,23 +119,24 @@ public class TransactionServiceTest {
     }
 
     @Test
-    void testGetTransactionById_NotFound_ThrowsException() {
-        when(repository.findById(999L)).thenReturn(Optional.empty());
+    void testGetTransactionById_NotFoundOrBelongsToAnotherUser_ThrowsResourceNotFoundException() {
+        // IDOR protection test: when transaction belongs to another user, findByIdAndUserId returns empty
+        when(repository.findByIdAndUserId(999L, 1L)).thenReturn(Optional.empty());
 
         assertThrows(ResourceNotFoundException.class, () -> service.getTransactionById(999L));
-        verify(repository, times(1)).findById(999L);
+        verify(repository, times(1)).findByIdAndUserId(999L, 1L);
     }
 
     @Test
     void testUpdateTransaction_Success() {
         Transaction existing = new Transaction(
-                5L, "Old Title", new BigDecimal("20.00"), "Old Cat", TransactionType.EXPENSE, LocalDate.now(), "Old"
+                5L, "Old Title", new BigDecimal("20.00"), "Old Cat", TransactionType.EXPENSE, LocalDate.now(), "Old", mockUser
         );
         TransactionRequestDto updateRequest = new TransactionRequestDto(
                 "New Title", new BigDecimal("35.00"), "New Cat", TransactionType.EXPENSE, LocalDate.now(), "New Desc"
         );
 
-        when(repository.findById(5L)).thenReturn(Optional.of(existing));
+        when(repository.findByIdAndUserId(5L, 1L)).thenReturn(Optional.of(existing));
         when(repository.save(existing)).thenReturn(existing);
 
         TransactionResponseDto updated = service.updateTransaction(5L, updateRequest);
@@ -120,11 +148,11 @@ public class TransactionServiceTest {
     }
 
     @Test
-    void testUpdateTransaction_NotFound_ThrowsException() {
+    void testUpdateTransaction_BelongsToAnotherUser_ThrowsException() {
         TransactionRequestDto updateRequest = new TransactionRequestDto(
                 "New Title", new BigDecimal("35.00"), "Cat", TransactionType.EXPENSE, LocalDate.now(), ""
         );
-        when(repository.findById(888L)).thenReturn(Optional.empty());
+        when(repository.findByIdAndUserId(888L, 1L)).thenReturn(Optional.empty());
 
         assertThrows(ResourceNotFoundException.class, () -> service.updateTransaction(888L, updateRequest));
         verify(repository, never()).save(any());
@@ -132,19 +160,22 @@ public class TransactionServiceTest {
 
     @Test
     void testDeleteTransaction_Success() {
-        when(repository.existsById(12L)).thenReturn(true);
-        doNothing().when(repository).deleteById(12L);
+        Transaction existing = new Transaction(
+                12L, "Title", new BigDecimal("10.00"), "Cat", TransactionType.EXPENSE, LocalDate.now(), "", mockUser
+        );
+        when(repository.findByIdAndUserId(12L, 1L)).thenReturn(Optional.of(existing));
+        doNothing().when(repository).delete(existing);
 
         assertDoesNotThrow(() -> service.deleteTransaction(12L));
-        verify(repository, times(1)).deleteById(12L);
+        verify(repository, times(1)).delete(existing);
     }
 
     @Test
-    void testDeleteTransaction_NotFound_ThrowsException() {
-        when(repository.existsById(99L)).thenReturn(false);
+    void testDeleteTransaction_NotFoundOrNotOwned_ThrowsException() {
+        when(repository.findByIdAndUserId(99L, 1L)).thenReturn(Optional.empty());
 
         assertThrows(ResourceNotFoundException.class, () -> service.deleteTransaction(99L));
-        verify(repository, never()).deleteById(anyLong());
+        verify(repository, never()).delete(any());
     }
 
     @Test
@@ -152,27 +183,16 @@ public class TransactionServiceTest {
         LocalDate start = LocalDate.of(2026, 10, 1);
         LocalDate end = LocalDate.of(2026, 10, 31);
 
-        when(repository.sumByTypeAndDateBetween(TransactionType.INCOME, start, end))
+        when(repository.sumByUserIdAndTypeAndDateBetween(1L, TransactionType.INCOME, start, end))
                 .thenReturn(new BigDecimal("5000.00"));
-        when(repository.sumByTypeAndDateBetween(TransactionType.EXPENSE, start, end))
+        when(repository.sumByUserIdAndTypeAndDateBetween(1L, TransactionType.EXPENSE, start, end))
                 .thenReturn(new BigDecimal("1250.25"));
-        when(repository.countByDateBetween(start, end)).thenReturn(4L);
-        when(repository.findHighestExpense(start, end)).thenReturn(new BigDecimal("750.00"));
-
-        Page<Transaction> expensePage = new PageImpl<>(List.of(
-                new Transaction(1L, "Rent", new BigDecimal("750.00"), "Housing", TransactionType.EXPENSE, start, ""),
-                new Transaction(2L, "Groceries", new BigDecimal("500.25"), "Food", TransactionType.EXPENSE, start, "")
-        ));
-        when(repository.findFiltered(eq(TransactionType.EXPENSE), isNull(), eq(start), eq(end), any(Pageable.class)))
-                .thenReturn(expensePage);
+        when(repository.countByUserIdAndDateBetween(1L, start, end)).thenReturn(4L);
+        when(repository.findHighestExpenseByUserId(1L, start, end)).thenReturn(new BigDecimal("750.00"));
+        when(repository.countByUserIdAndTypeAndDateBetween(1L, TransactionType.EXPENSE, start, end)).thenReturn(2L);
 
         FinancialSummaryResponseDto summary = service.getFinancialSummary(start, end);
 
-        // Verification of mathematical correctness and BigDecimal scale:
-        // Income = 5000.00
-        // Expense = 1250.25
-        // Net Balance = 5000.00 - 1250.25 = 3749.75
-        // Average Expense = 1250.25 / 2 = 625.13
         assertEquals(new BigDecimal("5000.00"), summary.totalIncome());
         assertEquals(new BigDecimal("1250.25"), summary.totalExpenses());
         assertEquals(new BigDecimal("3749.75"), summary.netBalance());
@@ -182,9 +202,47 @@ public class TransactionServiceTest {
     }
 
     @Test
+    void testGetFinancialSummary_EmptyData_ReturnsZeroAverages() {
+        when(repository.sumByUserIdAndTypeAndDateBetween(1L, TransactionType.INCOME, null, null))
+                .thenReturn(BigDecimal.ZERO);
+        when(repository.sumByUserIdAndTypeAndDateBetween(1L, TransactionType.EXPENSE, null, null))
+                .thenReturn(BigDecimal.ZERO);
+        when(repository.countByUserIdAndDateBetween(1L, null, null)).thenReturn(0L);
+        when(repository.findHighestExpenseByUserId(1L, null, null)).thenReturn(null);
+        when(repository.countByUserIdAndTypeAndDateBetween(1L, TransactionType.EXPENSE, null, null)).thenReturn(0L);
+
+        FinancialSummaryResponseDto summary = service.getFinancialSummary(null, null);
+
+        assertEquals(new BigDecimal("0.00"), summary.totalIncome());
+        assertEquals(new BigDecimal("0.00"), summary.totalExpenses());
+        assertEquals(new BigDecimal("0.00"), summary.netBalance());
+        assertEquals(0L, summary.transactionCount());
+        assertEquals(new BigDecimal("0.00"), summary.highestExpense());
+        assertEquals(new BigDecimal("0.00"), summary.averageExpense());
+    }
+
+    @Test
+    void testGetFinancialSummary_ZeroExpensesWithIncome_ReturnsZeroAverage() {
+        when(repository.sumByUserIdAndTypeAndDateBetween(1L, TransactionType.INCOME, null, null))
+                .thenReturn(new BigDecimal("3000.00"));
+        when(repository.sumByUserIdAndTypeAndDateBetween(1L, TransactionType.EXPENSE, null, null))
+                .thenReturn(BigDecimal.ZERO);
+        when(repository.countByUserIdAndDateBetween(1L, null, null)).thenReturn(1L);
+        when(repository.findHighestExpenseByUserId(1L, null, null)).thenReturn(null);
+        when(repository.countByUserIdAndTypeAndDateBetween(1L, TransactionType.EXPENSE, null, null)).thenReturn(0L);
+
+        FinancialSummaryResponseDto summary = service.getFinancialSummary(null, null);
+
+        assertEquals(new BigDecimal("3000.00"), summary.totalIncome());
+        assertEquals(new BigDecimal("0.00"), summary.totalExpenses());
+        assertEquals(new BigDecimal("3000.00"), summary.netBalance());
+        assertEquals(new BigDecimal("0.00"), summary.averageExpense());
+    }
+
+    @Test
     void testGetFinancialSummary_InvalidDateRange_ThrowsIllegalArgumentException() {
         LocalDate start = LocalDate.of(2026, 10, 31);
-        LocalDate end = LocalDate.of(2026, 10, 1); // start after end!
+        LocalDate end = LocalDate.of(2026, 10, 1);
 
         IllegalArgumentException ex = assertThrows(
                 IllegalArgumentException.class,
@@ -206,8 +264,8 @@ public class TransactionServiceTest {
         when(p2.getCategory()).thenReturn("transport");
         when(p2.getTotalAmount()).thenReturn(new BigDecimal("100.00"));
 
-        when(repository.findCategoryExpenseTotals(start, end)).thenReturn(List.of(p1, p2));
-        when(repository.sumByTypeAndDateBetween(TransactionType.EXPENSE, start, end))
+        when(repository.findCategoryExpenseTotalsByUserId(1L, start, end)).thenReturn(List.of(p1, p2));
+        when(repository.sumByUserIdAndTypeAndDateBetween(1L, TransactionType.EXPENSE, start, end))
                 .thenReturn(new BigDecimal("400.00"));
 
         List<CategoryExpenseDto> categories = service.getCategoryExpenses(start, end);
@@ -225,16 +283,23 @@ public class TransactionServiceTest {
     @Test
     void testGetTransactions_PaginationAndMapping() {
         Pageable pageable = PageRequest.of(0, 2);
-        Transaction t1 = new Transaction(1L, "Income 1", new BigDecimal("50.00"), "Work", TransactionType.INCOME, LocalDate.now(), "");
-        Transaction t2 = new Transaction(2L, "Income 2", new BigDecimal("75.00"), "Work", TransactionType.INCOME, LocalDate.now(), "");
+        Transaction t1 = new Transaction(1L, "Income 1", new BigDecimal("50.00"), "Work", TransactionType.INCOME, LocalDate.now(), "", mockUser);
+        Transaction t2 = new Transaction(2L, "Income 2", new BigDecimal("75.00"), "Work", TransactionType.INCOME, LocalDate.now(), "", mockUser);
         Page<Transaction> page = new PageImpl<>(List.of(t1, t2), pageable, 2);
 
-        when(repository.findFiltered(TransactionType.INCOME, null, null, null, pageable)).thenReturn(page);
+        when(repository.findFilteredByUserId(1L, TransactionType.INCOME, null, null, null, pageable)).thenReturn(page);
 
         Page<TransactionResponseDto> result = service.getTransactions(TransactionType.INCOME, null, null, null, pageable);
 
         assertEquals(2, result.getTotalElements());
         assertEquals("Income 1", result.getContent().get(0).title());
         assertEquals("Income 2", result.getContent().get(1).title());
+    }
+
+    @Test
+    void testUnauthenticatedAccess_ThrowsBadCredentialsException() {
+        SecurityContextHolder.clearContext();
+
+        assertThrows(BadCredentialsException.class, () -> service.getTransactionById(1L));
     }
 }
