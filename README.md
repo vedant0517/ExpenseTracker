@@ -136,7 +136,6 @@ erDiagram
 - **Monitoring:** Spring Boot Actuator
 - **Testing:** JUnit 5, Mockito, Spring Security Test, Spring Boot MockMvc, AssertJ
 - **Build & Dependency Tool:** Apache Maven
-- **Containerization:** Multi-stage Docker
 
 ---
 
@@ -336,16 +335,6 @@ Flyway initializes tables automatically on startup.
    mvn spring-boot:run
    ```
 
-### Option 3: Running with Docker
-A multi-stage [Dockerfile](Dockerfile) is provided:
-```bash
-# Build the container image
-docker build -t expense-tracker-api .
-
-# Run container (passing DB credentials & JWT secret via -e)
-docker run -p 8080:8080 -e JWT_SECRET="ProductionSecretKeyAtLeast32BytesLong" expense-tracker-api
-```
-
 ---
 
 ## Automated Testing & CI
@@ -395,7 +384,7 @@ Automated testing is integrated via GitHub Actions in [.github/workflows/maven.y
 ```
 
 ### Deployment Checklist:
-1. **Container Security:** Deploy via container on platforms such as **Render**, **Railway**, **AWS ECS**, or **Google Cloud Run** using the provided multi-stage [Dockerfile](Dockerfile), running under an unprivileged user (`spring:spring`).
+1. **Hosting:** Deploy the Spring Boot JAR on platforms such as **Render**, **Railway**, **AWS Elastic Beanstalk**, or **Google Cloud Run** with the packaged `mvn clean package` artifact.
 2. **Environment Variables:** Provide production credentials exclusively via environment variables:
    - `JWT_SECRET`: Secure, high-entropy secret (minimum 256 bits).
    - `DB_URL`: `jdbc:postgresql://<host>:<port>/<dbname>?sslmode=require`
